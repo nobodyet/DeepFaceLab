@@ -47,6 +47,12 @@ class FANSegmentator(object):
                         self.model.get_layer (s).set_weights ( d[s] )
                 except:
                     io.log_err("Unable to load VGG11 pretrained weights from vgg11_enc_weights.npy")
+                    
+                conv_weights_list = []                
+                for layer in self.model.layers:
+                    if 'CA.' in layer.name:
+                        conv_weights_list += [layer.weights[0]] #Conv2D kernel_weights
+                CAInitializerMP ( conv_weights_list )
 
         if training:
             #self.model.compile(loss='mse', optimizer=Adam(tf_cpu_mode=2))
@@ -94,46 +100,46 @@ class FANSegmentator(object):
             x = input
 
             x0 = x = Conv2D(ngf, kernel_size=3, strides=1, padding='same', activation='relu', name='features.0')(x)
-            x = MaxPooling2D()(x)
+            x = BlurPool(filt_size=3)(x) #x = MaxPooling2D()(x)
 
             x1 = x = Conv2D(ngf*2, kernel_size=3, strides=1, padding='same', activation='relu', name='features.3')(x)
-            x = MaxPooling2D()(x)
+            x = BlurPool(filt_size=3)(x) 
 
             x = Conv2D(ngf*4, kernel_size=3, strides=1, padding='same', activation='relu', name='features.6')(x)
             x2 = x = Conv2D(ngf*4, kernel_size=3, strides=1, padding='same', activation='relu', name='features.8')(x)
-            x = MaxPooling2D()(x)
+            x = BlurPool(filt_size=3)(x) 
 
             x = Conv2D(ngf*8, kernel_size=3, strides=1, padding='same', activation='relu', name='features.11')(x)
             x3 = x = Conv2D(ngf*8, kernel_size=3, strides=1, padding='same', activation='relu', name='features.13')(x)
-            x = MaxPooling2D()(x)
+            x = BlurPool(filt_size=3)(x) 
 
             x = Conv2D(ngf*8, kernel_size=3, strides=1, padding='same', activation='relu', name='features.16')(x)
             x4 = x = Conv2D(ngf*8, kernel_size=3, strides=1, padding='same', activation='relu', name='features.18')(x)
-            x = MaxPooling2D()(x)
+            x = BlurPool(filt_size=3)(x) 
 
-            x = Conv2D(ngf*8, kernel_size=3, strides=1, padding='same')(x)
+            x = Conv2D(ngf*8, kernel_size=3, strides=1, padding='same', name='CA.1')(x)
 
-            x = Conv2DTranspose (ngf*4, 3, strides=2, padding='same', activation='relu') (x)
+            x = Conv2DTranspose (ngf*4, 3, strides=2, padding='same', activation='relu', name='CA.2') (x)
             x = Concatenate(axis=3)([ x, x4])
-            x = Conv2D (ngf*8, 3, strides=1, padding='same', activation='relu') (x)
+            x = Conv2D (ngf*8, 3, strides=1, padding='same', activation='relu', name='CA.3') (x)
 
-            x = Conv2DTranspose (ngf*4, 3, strides=2, padding='same', activation='relu') (x)
+            x = Conv2DTranspose (ngf*4, 3, strides=2, padding='same', activation='relu', name='CA.4') (x)
             x = Concatenate(axis=3)([ x, x3])
-            x = Conv2D (ngf*8, 3, strides=1, padding='same', activation='relu') (x)
+            x = Conv2D (ngf*8, 3, strides=1, padding='same', activation='relu', name='CA.5') (x)
 
-            x = Conv2DTranspose (ngf*2, 3, strides=2, padding='same', activation='relu') (x)
+            x = Conv2DTranspose (ngf*2, 3, strides=2, padding='same', activation='relu', name='CA.6') (x)
             x = Concatenate(axis=3)([ x, x2])
-            x = Conv2D (ngf*4, 3, strides=1, padding='same', activation='relu') (x)
+            x = Conv2D (ngf*4, 3, strides=1, padding='same', activation='relu', name='CA.7') (x)
 
-            x = Conv2DTranspose (ngf, 3, strides=2, padding='same', activation='relu') (x)
+            x = Conv2DTranspose (ngf, 3, strides=2, padding='same', activation='relu', name='CA.8') (x)
             x = Concatenate(axis=3)([ x, x1])
-            x = Conv2D (ngf*2, 3, strides=1, padding='same', activation='relu') (x)
+            x = Conv2D (ngf*2, 3, strides=1, padding='same', activation='relu', name='CA.9') (x)
 
-            x = Conv2DTranspose (ngf // 2, 3, strides=2, padding='same', activation='relu') (x)
+            x = Conv2DTranspose (ngf // 2, 3, strides=2, padding='same', activation='relu', name='CA.10') (x)
             x = Concatenate(axis=3)([ x, x0])
-            x = Conv2D (ngf, 3, strides=1, padding='same', activation='relu') (x)
+            x = Conv2D (ngf, 3, strides=1, padding='same', activation='relu', name='CA.11') (x)
 
-            return Conv2D(1, 3, strides=1, padding='same', activation='sigmoid')(x)
+            return Conv2D(1, 3, strides=1, padding='same', activation='sigmoid', name='CA.12')(x)
 
 
         return func

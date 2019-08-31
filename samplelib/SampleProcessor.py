@@ -36,7 +36,7 @@ opts:
             'MODE_BGR_SHUFFLE' #BGR shuffle
 
     'resolution' : N
-    'motion_blur' : (chance_int, range) - chance 0..100 to apply to face (not mask), and range [1..3] where 3 is highest power of motion blur
+    'motion_blur' : (chance_int, range) - chance 0..100 to apply to face (not mask), and max_size of motion blur
     'apply_ct' : bool
     'normalize_tanh' : bool
 
@@ -185,18 +185,19 @@ class SampleProcessor(object):
 
                     if is_face_sample:
                         if motion_blur is not None:
-                            chance, mb_range = motion_blur
+                            chance, mb_max_size = motion_blur
                             chance = np.clip(chance, 0, 100)
 
                             if np.random.randint(100) < chance:
-                                mb_range = [3,5,7,9][ : np.clip(mb_range, 0, 3)+1 ]
-                                dim = mb_range[ np.random.randint(len(mb_range) ) ]
-                                img = imagelib.LinearMotionBlur (img, dim, np.random.randint(180) )
+                                img = imagelib.LinearMotionBlur (img, np.random.randint( mb_max_size )+1, np.random.randint(360) )
 
                         mask = cur_sample.load_fanseg_mask() #using fanseg_mask if exist
 
                         if mask is None:
-                            mask = LandmarksProcessor.get_image_hull_mask (img.shape, cur_sample.landmarks)
+                            if cur_sample.eyebrows_expand_mod is not None:
+                                mask = LandmarksProcessor.get_image_hull_mask (img.shape, cur_sample.landmarks, eyebrows_expand_mod=cur_sample.eyebrows_expand_mod )
+                            else:
+                                mask = LandmarksProcessor.get_image_hull_mask (img.shape, cur_sample.landmarks)
 
                         if cur_sample.ie_polys is not None:
                             cur_sample.ie_polys.overlay_mask(mask)
