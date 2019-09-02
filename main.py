@@ -232,13 +232,15 @@ if __name__ == "__main__":
 
     def process_labelingtool_edit_mask(arguments):
         from mainscripts import MaskEditorTool
-        MaskEditorTool.mask_editor_main (arguments.input_dir, arguments.confirmed_dir, arguments.skipped_dir)
+        MaskEditorTool.mask_editor_main (arguments.input_dir, arguments.confirmed_dir, arguments.skipped_dir, no_default_mask=arguments.no_default_mask)
 
     labeling_parser = subparsers.add_parser( "labelingtool", help="Labeling tool.").add_subparsers()
     p = labeling_parser.add_parser ( "edit_mask", help="")
     p.add_argument('--input-dir', required=True, action=fixPathAction, dest="input_dir", help="Input directory of aligned faces.")
     p.add_argument('--confirmed-dir', required=True, action=fixPathAction, dest="confirmed_dir", help="This is where the labeled faces will be stored.")
     p.add_argument('--skipped-dir', required=True, action=fixPathAction, dest="skipped_dir", help="This is where the labeled faces will be stored.")
+    p.add_argument('--no-default-mask', action="store_true", dest="no_default_mask", default=False, help="Don't use default mask.")
+    
     p.set_defaults(func=process_labelingtool_edit_mask)
 
     def bad_args(arguments):
