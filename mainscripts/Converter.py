@@ -16,7 +16,9 @@ import numpy.linalg as npla
 import imagelib
 from converters import (ConverterConfig, ConvertFaceAvatar, ConvertMasked,
                         FrameInfo)
-from facelib import FaceType, FANSegmentator, LandmarksProcessor
+from facelib import FaceType, LandmarksProcessor
+from nnlib import TernausNet
+
 from interact import interact as io
 from joblib import SubprocessFunctionCaller, Subprocessor
 from utils import Path_utils
@@ -73,6 +75,7 @@ class ConvertSubprocessor(Subprocessor):
             self.device_idx  = client_dict['device_idx']
             self.device_name = client_dict['device_name']
             self.predictor_func = client_dict['predictor_func']
+            self.predictor_input_shape = client_dict['predictor_input_shape']
             self.superres_func = client_dict['superres_func']
 
             #transfer and set stdin in order to work code.interact in debug subprocess
@@ -86,22 +89,35 @@ class ConvertSubprocessor(Subprocessor):
             #therefore forcing active_DeviceConfig to CPU only
             nnlib.active_DeviceConfig = nnlib.DeviceConfig (cpu_only=True)
 
-            def sharpen_func (img, sharpen_mode=0, kernel_size=3, amount=150):
+            def blursharpen_func (img, sharpen_mode=0, kernel_size=3, amount=100):
                 if kernel_size % 2 == 0:
                     kernel_size += 1
+                if amount > 0:
+                    if sharpen_mode == 1: #box
+                        kernel = np.zeros( (kernel_size, kernel_size), dtype=np.float32)
+                        kernel[ kernel_size//2, kernel_size//2] = 1.0
+                        box_filter = np.ones( (kernel_size, kernel_size), dtype=np.float32) / (kernel_size**2)
+                        kernel = kernel + (kernel - box_filter) * amount
+                        return cv2.filter2D(img, -1, kernel)
+                    elif sharpen_mode == 2: #gaussian
+                        blur = cv2.GaussianBlur(img, (kernel_size, kernel_size) , 0)
+                        img = cv2.addWeighted(img, 1.0 + (0.5 * amount), blur, -(0.5 * amount), 0)
+                        return img
+                elif amount < 0:
+                    n = -amount
+                    while n > 0:
 
-                if sharpen_mode == 1: #box
-                    kernel = np.zeros( (kernel_size, kernel_size), dtype=np.float32)
-                    kernel[ kernel_size//2, kernel_size//2] = 1.0
-                    box_filter = np.ones( (kernel_size, kernel_size), dtype=np.float32) / (kernel_size**2)
-                    kernel = kernel + (kernel - box_filter) * amount
-                    return cv2.filter2D(img, -1, kernel)
-                elif sharpen_mode == 2: #gaussian
-                    blur = cv2.GaussianBlur(img, (kernel_size, kernel_size) , 0)
-                    img = cv2.addWeighted(img, 1.0 + (0.5 * amount), blur, -(0.5 * amount), 0)
+                        img_blur = cv2.medianBlur(img, 5)
+                        if int(n / 10) != 0:
+                            img = img_blur
+                        else:
+                            pass_power = (n % 10) / 10.0
+                            img = img*(1.0-pass_power)+img_blur*pass_power
+                        n = max(n-10,0)
+
                     return img
                 return img
-            self.sharpen_func = sharpen_func
+            self.blursharpen_func = blursharpen_func
 
             self.fanseg_by_face_type = {}
             self.fanseg_input_size = 256
@@ -109,21 +125,39 @@ class ConvertSubprocessor(Subprocessor):
             def fanseg_extract(face_type, *args, **kwargs):
                 fanseg = self.fanseg_by_face_type.get(face_type, None)
                 if self.fanseg_by_face_type.get(face_type, None) is None:
-                    fanseg = FANSegmentator( self.fanseg_input_size , FaceType.toString( face_type ) )
+                    fanseg = TernausNet("FANSeg", self.fanseg_input_size , FaceType.toString( face_type ) )
                     self.fanseg_by_face_type[face_type] = fanseg
 
                 return fanseg.extract(*args, **kwargs)
 
             self.fanseg_extract_func = fanseg_extract
 
+            self.fanchq_by_face_type = {}
+            self.fanchq_input_size = 256
+            def fanchq_extract(face_type, *args, **kwargs):
+                fanchq = self.fanchq_by_face_type.get(face_type, None)
+                if self.fanchq_by_face_type.get(face_type, None) is None:
+                    fanchq = TernausNet("FANCHQ", self.fanchq_input_size , FaceType.toString( face_type ) )
+                    self.fanchq_by_face_type[face_type] = fanchq
+
+                return fanchq.extract(*args, **kwargs)
+
+            self.fanchq_extract_func = fanchq_extract
+
+            import ebsynth
+            def ebs_ct(*args, **kwargs):
+                return ebsynth.color_transfer(*args, **kwargs)
+
+            self.ebs_ct_func = ebs_ct
+
             return None
 
         #override
         def process_data(self, pf): #pf=ProcessingFrame
             cfg = pf.cfg.copy()
-            cfg.predictor_func = self.predictor_func
-            cfg.sharpen_func = self.sharpen_func
+            cfg.blursharpen_func = self.blursharpen_func
             cfg.superres_func = self.superres_func
+            cfg.ebs_ct_func = self.ebs_ct_func
 
             frame_info = pf.frame_info
 
@@ -150,9 +184,11 @@ class ConvertSubprocessor(Subprocessor):
                 if cfg.type == ConverterConfig.TYPE_MASKED:
                     cfg.fanseg_input_size = self.fanseg_input_size
                     cfg.fanseg_extract_func = self.fanseg_extract_func
+                    cfg.fanchq_input_size = self.fanchq_input_size
+                    cfg.fanchq_extract_func = self.fanchq_extract_func
 
                     try:
-                        final_img = ConvertMasked (cfg, frame_info)
+                        final_img = ConvertMasked (self.predictor_func, self.predictor_input_shape, cfg, frame_info)
                     except Exception as e:
                         e_str = traceback.format_exc()
                         if 'MemoryError' in e_str:
@@ -161,7 +197,8 @@ class ConvertSubprocessor(Subprocessor):
                             raise Exception( 'Error while converting file [%s]: %s' % (filename, e_str) )
 
                 elif cfg.type == ConverterConfig.TYPE_FACE_AVATAR:
-                    final_img = ConvertFaceAvatar (cfg, pf.prev_temporal_frame_infos,
+                    final_img = ConvertFaceAvatar (self.predictor_func, self.predictor_input_shape,
+                                                   cfg, pf.prev_temporal_frame_infos,
                                                         pf.frame_info,
                                                         pf.next_temporal_frame_infos )
 
@@ -179,21 +216,22 @@ class ConvertSubprocessor(Subprocessor):
             return pf.frame_info.filename
 
     #override
-    def __init__(self, is_interactive, converter_config, frames, output_path, model_iter):
+    def __init__(self, is_interactive, converter_session_filepath, predictor_func, predictor_input_shape, converter_config, frames, output_path, model_iter):
         if len (frames) == 0:
             raise ValueError ("len (frames) == 0")
 
-        super().__init__('Converter', ConvertSubprocessor.Cli, 86400 if CONVERTER_DEBUG else 60, io_loop_sleep_time=0.001, initialize_subprocesses_in_serial=False)# if debug == True else 60)
+        super().__init__('Converter', ConvertSubprocessor.Cli, 86400 if CONVERTER_DEBUG else 60, io_loop_sleep_time=0.001, initialize_subprocesses_in_serial=False)
 
         self.is_interactive = is_interactive
+        self.converter_session_filepath = Path(converter_session_filepath)
         self.converter_config = converter_config
 
         #dummy predict and sleep, tensorflow caching kernels. If remove it, sometime conversion speed can be x2 slower
-        self.converter_config.predictor_func (dummy_predict=True)
+        predictor_func (dummy_predict=True)
         time.sleep(2)
 
-        self.predictor_func_host, self.predictor_func = SubprocessFunctionCaller.make_pair(self.converter_config.predictor_func)
-        self.converter_config.predictor_func = None
+        self.predictor_func_host, self.predictor_func = SubprocessFunctionCaller.make_pair(predictor_func)
+        self.predictor_input_shape = predictor_input_shape
 
         self.dcscn = None
         self.ranksrgan = None
@@ -211,14 +249,14 @@ class ConvertSubprocessor(Subprocessor):
         self.prefetch_frame_count = self.process_count = min(6,multiprocessing.cpu_count())
 
         session_data = None
-        session_dat_path = self.output_path / 'session.dat'
-        if session_dat_path.exists():
+        if self.is_interactive and self.converter_session_filepath.exists():
 
-            try:
-                with open( str(session_dat_path), "rb") as f:
-                    session_data = pickle.loads(f.read())
-            except Exception as e:
-                pass
+            if io.input_bool ("Use saved session? (y/n skip:y) : ", True):
+                try:
+                    with open( str(self.converter_session_filepath), "rb") as f:
+                        session_data = pickle.loads(f.read())
+                except Exception as e:
+                    pass
 
         self.frames = frames
         self.frames_idxs = [ *range(len(self.frames)) ]
@@ -246,10 +284,19 @@ class ConvertSubprocessor(Subprocessor):
                         break
 
             if frames_equal:
-                io.log_info ("Using saved session.")
+                io.log_info ('Using saved session from ' + '/'.join (self.converter_session_filepath.parts[-2:]) )
+
+                for frame in s_frames:
+                    if frame.cfg is not None:
+                        #recreate ConverterConfig class using constructor with get_config() as dict params
+                        #so if any new param will be added, old converter session will work properly
+                        frame.cfg = frame.cfg.__class__( **frame.cfg.get_config() )
+
                 self.frames = s_frames
                 self.frames_idxs = s_frames_idxs
                 self.frames_done_idxs = s_frames_done_idxs
+
+
 
                 if self.model_iter != s_model_iter:
                     #model is more trained, recompute all frames
@@ -259,7 +306,7 @@ class ConvertSubprocessor(Subprocessor):
                 if self.model_iter != s_model_iter or \
                     len(self.frames_idxs) == 0:
                     #rewind to begin if model is more trained or all frames are done
-                   
+
                     while len(self.frames_done_idxs) > 0:
                         prev_frame = self.frames[self.frames_done_idxs.pop()]
                         self.frames_idxs.insert(0, prev_frame.idx)
@@ -292,6 +339,7 @@ class ConvertSubprocessor(Subprocessor):
             yield 'CPU%d' % (i), {}, {'device_idx': i,
                                       'device_name': 'CPU%d' % (i),
                                       'predictor_func': self.predictor_func,
+                                      'predictor_input_shape' : self.predictor_input_shape,
                                       'superres_func': self.superres_func,
                                       'stdin_fd': sys.stdin.fileno() if CONVERTER_DEBUG else None
                                       }
@@ -332,13 +380,12 @@ class ConvertSubprocessor(Subprocessor):
                 'frames_done_idxs': self.frames_done_idxs,
                 'model_iter' : self.model_iter,
             }
-            save_path = self.output_path / 'session.dat'
-            save_path.write_bytes( pickle.dumps(session_data) )
+            self.converter_session_filepath.write_bytes( pickle.dumps(session_data) )
 
-            io.log_info ("Session is saved to " + '/'.join (save_path.parts[-2:]) )
+            io.log_info ("Session is saved to " + '/'.join (self.converter_session_filepath.parts[-2:]) )
 
-    cfg_change_keys = ['`','1', '2', '3', '4', '5', '6', '7', '8', '9',
-                                 'q', 'a', 'w', 's', 'e', 'd', 'r', 'f', 't', 'g','y','h','u','j',
+    cfg_change_keys = ['`','1', '2', '3', '4', '5', '6', '7', '8', 
+                                 'q', 'a', 'w', 's', 'e', 'd', 'r', 'f', 'y','h','u','j','i','k','o','l','p', ';',':',#'t', 'g',
                                  'z', 'x', 'c', 'v', 'b','n'   ]
     #override
     def on_tick(self):
@@ -362,7 +409,7 @@ class ConvertSubprocessor(Subprocessor):
                     if not cur_frame.is_shown:
                         if cur_frame.is_done:
                             cur_frame.is_shown = True
-                            io.log_info (cur_frame.cfg)
+                            io.log_info (cur_frame.cfg.to_string( cur_frame.frame_info.filename_short) )
 
                             if cur_frame.image is None:
                                 cur_frame.image = cv2_imread ( cur_frame.output_filename)
@@ -400,7 +447,7 @@ class ConvertSubprocessor(Subprocessor):
                             if cfg.type == ConverterConfig.TYPE_MASKED:
                                 if chr_key == '`':
                                     cfg.set_mode(0)
-                                elif key >= ord('1') and key <= ord('9'):
+                                elif key >= ord('1') and key <= ord('8'):
                                     cfg.set_mode( key - ord('0') )
                                 elif chr_key == 'q':
                                     cfg.add_hist_match_threshold(1 if not shift_pressed else 5)
@@ -418,18 +465,29 @@ class ConvertSubprocessor(Subprocessor):
                                     cfg.add_motion_blur_power(1 if not shift_pressed else 5)
                                 elif chr_key == 'f':
                                     cfg.add_motion_blur_power(-1 if not shift_pressed else -5)
-                                elif chr_key == 't':
-                                    cfg.add_color_degrade_power(1 if not shift_pressed else 5)
-                                elif chr_key == 'g':
-                                    cfg.add_color_degrade_power(-1 if not shift_pressed else -5)
                                 elif chr_key == 'y':
-                                    cfg.add_sharpen_amount(1 if not shift_pressed else 5)
+                                    cfg.add_blursharpen_amount(1 if not shift_pressed else 5)
                                 elif chr_key == 'h':
-                                    cfg.add_sharpen_amount(-1 if not shift_pressed else -5)
+                                    cfg.add_blursharpen_amount(-1 if not shift_pressed else -5)
                                 elif chr_key == 'u':
                                     cfg.add_output_face_scale(1 if not shift_pressed else 5)
                                 elif chr_key == 'j':
                                     cfg.add_output_face_scale(-1 if not shift_pressed else -5)
+                                elif chr_key == 'i':
+                                    cfg.add_image_denoise_power(1 if not shift_pressed else 5)
+                                elif chr_key == 'k':
+                                    cfg.add_image_denoise_power(-1 if not shift_pressed else -5)
+                                elif chr_key == 'o':
+                                    cfg.add_bicubic_degrade_power(1 if not shift_pressed else 5)
+                                elif chr_key == 'l':
+                                    cfg.add_bicubic_degrade_power(-1 if not shift_pressed else -5)
+
+                                elif chr_key == 'p':
+                                    cfg.add_color_degrade_power(1 if not shift_pressed else 5)
+                                elif chr_key == ';':
+                                    cfg.add_color_degrade_power(-1)
+                                elif chr_key == ':':
+                                    cfg.add_color_degrade_power(-5)
 
                                 elif chr_key == 'z':
                                     cfg.toggle_masked_hist_match()
@@ -446,9 +504,9 @@ class ConvertSubprocessor(Subprocessor):
 
                             else:
                                 if chr_key == 'y':
-                                    cfg.add_sharpen_amount(1 if not shift_pressed else 5)
+                                    cfg.add_blursharpen_amount(1 if not shift_pressed else 5)
                                 elif chr_key == 'h':
-                                    cfg.add_sharpen_amount(-1 if not shift_pressed else -5)
+                                    cfg.add_blursharpen_amount(-1 if not shift_pressed else -5)
                                 elif chr_key == 's':
                                     cfg.toggle_add_source_image()
                                 elif chr_key == 'v':
@@ -457,7 +515,7 @@ class ConvertSubprocessor(Subprocessor):
                                     cfg.toggle_sharpen_mode()
 
                             if prev_cfg != cfg:
-                                io.log_info (cfg)
+                                io.log_info ( cfg.to_string(cur_frame.frame_info.filename_short) )
                                 cur_frame.is_done = False
                                 cur_frame.is_shown = False
                     else:
@@ -569,6 +627,8 @@ class ConvertSubprocessor(Subprocessor):
 def main (args, device_args):
     io.log_info ("Running converter.\r\n")
 
+    training_data_src_dir = args.get('training_data_src_dir', None)
+    training_data_src_path = Path(training_data_src_dir) if training_data_src_dir is not None else None
     aligned_dir = args.get('aligned_dir', None)
     avaperator_aligned_dir = args.get('avaperator_aligned_dir', None)
 
@@ -591,9 +651,9 @@ def main (args, device_args):
         is_interactive = io.input_bool ("Use interactive converter? (y/n skip:y) : ", True) if not io.is_colab() else False
 
         import models
-        model = models.import_model( args['model_name'] )(model_path, device_args=device_args)
-
-        cfg = model.get_ConverterConfig()
+        model = models.import_model( args['model_name'])(model_path, device_args=device_args, training_data_src_path=training_data_src_path)
+        converter_session_filepath = model.get_strpath_storage_for_file('converter_session.dat')
+        predictor_func, predictor_input_shape, cfg = model.get_ConverterConfig()
 
         if not is_interactive:
             cfg.ask_settings()
@@ -627,7 +687,13 @@ def main (args, device_args):
                     io.log_err ("%s is not a dfl image file" % (filepath.name) )
                     continue
 
-                source_filename_stem = Path( dflimg.get_source_filename() ).stem
+                source_filename = dflimg.get_source_filename()
+                if source_filename is None or source_filename == "_":
+                    continue
+                
+                source_filename = Path(source_filename)
+                source_filename_stem = source_filename.stem
+                
                 if source_filename_stem not in alignments.keys():
                     alignments[ source_filename_stem ] = []
 
@@ -717,6 +783,9 @@ def main (args, device_args):
         else:
             ConvertSubprocessor (
                         is_interactive         = is_interactive,
+                        converter_session_filepath = converter_session_filepath,
+                        predictor_func         = predictor_func,
+                        predictor_input_shape  = predictor_input_shape,
                         converter_config       = cfg,
                         frames                 = frames,
                         output_path            = output_path,

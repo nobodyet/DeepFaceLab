@@ -18,7 +18,18 @@ output_sample_types = [
                       ]
 '''
 class SampleGeneratorFace(SampleGeneratorBase):
-    def __init__ (self, samples_path, debug, batch_size, sort_by_yaw=False, sort_by_yaw_target_samples_path=None, random_ct_samples_path=None, sample_process_options=SampleProcessor.Options(), output_sample_types=[], add_sample_idx=False, generators_count=2, generators_random_seed=None, **kwargs):
+    def __init__ (self, samples_path, debug=False, batch_size=1, 
+                        sort_by_yaw=False, 
+                        sort_by_yaw_target_samples_path=None, 
+                        random_ct_samples_path=None, 
+                        sample_process_options=SampleProcessor.Options(), 
+                        output_sample_types=[], 
+                        add_sample_idx=False, 
+                        use_caching=False,
+                        generators_count=2, 
+                        generators_random_seed=None, 
+                        **kwargs):
+                        
         super().__init__(samples_path, debug, batch_size)
         self.sample_process_options = sample_process_options
         self.output_sample_types = output_sample_types
@@ -35,9 +46,14 @@ class SampleGeneratorFace(SampleGeneratorBase):
             raise ValueError("len(generators_random_seed) != generators_count")
 
         self.generators_random_seed = generators_random_seed
-
-        samples = SampleLoader.load (self.sample_type, self.samples_path, sort_by_yaw_target_samples_path)
-
+        
+        samples = SampleLoader.load (self.sample_type, self.samples_path, sort_by_yaw_target_samples_path, use_caching=use_caching)
+        np.random.shuffle(samples)
+        self.samples_len = len(samples)
+        
+        if self.samples_len == 0:
+            raise ValueError('No training data provided.')
+        
         ct_samples = SampleLoader.load (SampleType.FACE, random_ct_samples_path) if random_ct_samples_path is not None else None
         self.random_ct_sample_chance = 100
 
@@ -45,11 +61,15 @@ class SampleGeneratorFace(SampleGeneratorBase):
             self.generators_count = 1
             self.generators = [iter_utils.ThisThreadGenerator ( self.batch_func, (0, samples, ct_samples) )]
         else:
-            self.generators_count = min ( generators_count, len(samples) )
+            self.generators_count = min ( generators_count, self.samples_len )
             self.generators = [iter_utils.SubprocessGenerator ( self.batch_func, (i, samples[i::self.generators_count], ct_samples ) ) for i in range(self.generators_count) ]
 
         self.generator_counter = -1
-
+    
+    #overridable
+    def get_total_sample_count(self):
+        return self.samples_len
+        
     def __iter__(self):
         return self
 
@@ -58,7 +78,7 @@ class SampleGeneratorFace(SampleGeneratorBase):
         generator = self.generators[self.generator_counter % len(self.generators) ]
         return next(generator)
 
-    def batch_func(self, param ):
+    def batch_func(self, param ):        
         generator_id, samples, ct_samples = param
 
         if self.generators_random_seed is not None:
@@ -68,9 +88,6 @@ class SampleGeneratorFace(SampleGeneratorBase):
         samples_idxs = [*range(samples_len)]
 
         ct_samples_len = len(ct_samples) if ct_samples is not None else 0
-
-        if len(samples_idxs) == 0:
-            raise ValueError('No training data provided.')
 
         if self.sample_type == SampleType.FACE_YAW_SORTED or self.sample_type == SampleType.FACE_YAW_SORTED_AS_TARGET:
             if all ( [ samples[idx] == None for idx in samples_idxs] ):
@@ -82,7 +99,7 @@ class SampleGeneratorFace(SampleGeneratorBase):
             shuffle_idxs = []
             shuffle_idxs_2D = [[]]*samples_len
 
-        while True:
+        while True:            
             batches = None
             for n_batch in range(self.batch_size):
                 while True:
@@ -139,4 +156,9 @@ class SampleGeneratorFace(SampleGeneratorBase):
                             batches[i_sample_idx].append (idx)
 
                         break
+
             yield [ np.array(batch) for batch in batches]
+    
+    @staticmethod
+    def get_person_id_max_count(samples_path):
+        return SampleLoader.get_person_id_max_count(samples_path)

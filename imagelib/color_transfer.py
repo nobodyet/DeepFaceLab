@@ -1,6 +1,184 @@
-import numpy as np
 import cv2
+import numpy as np
+from numpy import linalg as npla
 
+import scipy as sp
+import scipy.sparse
+from scipy.sparse.linalg import spsolve
+
+def color_transfer_sot(src,trg, steps=10, batch_size=5, reg_sigmaXY=16.0, reg_sigmaV=5.0):
+    """
+    Color Transform via Sliced Optimal Transfer
+    ported by @iperov from https://github.com/dcoeurjo/OTColorTransfer 
+
+    src         - any float range any channel image
+    dst         - any float range any channel image, same shape as src
+    steps       - number of solver steps
+    batch_size  - solver batch size
+    reg_sigmaXY - apply regularization and sigmaXY of filter, otherwise set to 0.0
+    reg_sigmaV  - sigmaV of filter
+    
+    return value - clip it manually
+    """
+    if not np.issubdtype(src.dtype, np.floating):
+        raise ValueError("src value must be float")
+    if not np.issubdtype(trg.dtype, np.floating):
+        raise ValueError("trg value must be float")
+
+    if len(src.shape) != 3:
+        raise ValueError("src shape must have rank 3 (h,w,c)")
+    
+    if src.shape != trg.shape:
+        raise ValueError("src and trg shapes must be equal")    
+
+    src_dtype = src.dtype        
+    h,w,c = src.shape
+    new_src = src.copy()
+
+    for step in range (steps):
+        advect = np.zeros ( (h*w,c), dtype=src_dtype )
+        for batch in range (batch_size):
+            dir = np.random.normal(size=c).astype(src_dtype)
+            dir /= npla.norm(dir)
+
+            projsource = np.sum( new_src*dir, axis=-1).reshape ((h*w))
+            projtarget = np.sum( trg*dir, axis=-1).reshape ((h*w))
+
+            idSource = np.argsort (projsource)
+            idTarget = np.argsort (projtarget)
+
+            a = projtarget[idTarget]-projsource[idSource]
+            for i_c in range(c):
+                advect[idSource,i_c] += a * dir[i_c]
+        new_src += advect.reshape( (h,w,c) ) / batch_size
+
+    if reg_sigmaXY != 0.0:
+        src_diff = new_src-src
+        src_diff_filt = cv2.bilateralFilter (src_diff, 0, reg_sigmaV, reg_sigmaXY )
+        if len(src_diff_filt.shape) == 2:
+            src_diff_filt = src_diff_filt[...,None]
+        new_src = src + src_diff_filt
+    return new_src
+        
+def color_transfer_mkl(x0, x1):
+    eps = np.finfo(float).eps
+    
+    h,w,c = x0.shape
+    h1,w1,c1 = x1.shape
+    
+    x0 = x0.reshape ( (h*w,c) )
+    x1 = x1.reshape ( (h1*w1,c1) )
+    
+    a = np.cov(x0.T)
+    b = np.cov(x1.T)
+
+    Da2, Ua = np.linalg.eig(a)
+    Da = np.diag(np.sqrt(Da2.clip(eps, None))) 
+
+    C = np.dot(np.dot(np.dot(np.dot(Da, Ua.T), b), Ua), Da)
+
+    Dc2, Uc = np.linalg.eig(C)
+    Dc = np.diag(np.sqrt(Dc2.clip(eps, None))) 
+
+    Da_inv = np.diag(1./(np.diag(Da)))
+
+    t = np.dot(np.dot(np.dot(np.dot(np.dot(np.dot(Ua, Da_inv), Uc), Dc), Uc.T), Da_inv), Ua.T) 
+
+    mx0 = np.mean(x0, axis=0)
+    mx1 = np.mean(x1, axis=0)
+
+    result = np.dot(x0-mx0, t) + mx1
+    return np.clip ( result.reshape ( (h,w,c) ).astype(x0.dtype), 0, 1)
+    
+def color_transfer_idt(i0, i1, bins=256, n_rot=20):
+    relaxation = 1 / n_rot
+    h,w,c = i0.shape
+    h1,w1,c1 = i1.shape
+    
+    i0 = i0.reshape ( (h*w,c) )
+    i1 = i1.reshape ( (h1*w1,c1) )
+    
+    n_dims = c
+    
+    d0 = i0.T
+    d1 = i1.T
+    
+    for i in range(n_rot):
+        
+        r = sp.stats.special_ortho_group.rvs(n_dims).astype(np.float32)
+        
+        d0r = np.dot(r, d0)
+        d1r = np.dot(r, d1)
+        d_r = np.empty_like(d0)
+        
+        for j in range(n_dims):
+            
+            lo = min(d0r[j].min(), d1r[j].min())
+            hi = max(d0r[j].max(), d1r[j].max())
+            
+            p0r, edges = np.histogram(d0r[j], bins=bins, range=[lo, hi])
+            p1r, _     = np.histogram(d1r[j], bins=bins, range=[lo, hi])
+
+            cp0r = p0r.cumsum().astype(np.float32)
+            cp0r /= cp0r[-1]
+
+            cp1r = p1r.cumsum().astype(np.float32)
+            cp1r /= cp1r[-1]
+            
+            f = np.interp(cp0r, cp1r, edges[1:])
+            
+            d_r[j] = np.interp(d0r[j], edges[1:], f, left=0, right=bins)
+        
+        d0 = relaxation * np.linalg.solve(r, (d_r - d0r)) + d0
+
+    return np.clip ( d0.T.reshape ( (h,w,c) ).astype(i0.dtype) , 0, 1)
+
+def laplacian_matrix(n, m):
+    mat_D = scipy.sparse.lil_matrix((m, m))
+    mat_D.setdiag(-1, -1)
+    mat_D.setdiag(4)
+    mat_D.setdiag(-1, 1)        
+    mat_A = scipy.sparse.block_diag([mat_D] * n).tolil()    
+    mat_A.setdiag(-1, 1*m)
+    mat_A.setdiag(-1, -1*m)    
+    return mat_A
+
+def seamless_clone(source, target, mask):
+    h, w,c = target.shape
+    result = []
+    
+    mat_A = laplacian_matrix(h, w)
+    laplacian = mat_A.tocsc()
+
+    mask[0,:] = 1
+    mask[-1,:] = 1
+    mask[:,0] = 1
+    mask[:,-1] = 1
+    q = np.argwhere(mask==0)
+    
+    k = q[:,1]+q[:,0]*w
+    mat_A[k, k] = 1
+    mat_A[k, k + 1] = 0
+    mat_A[k, k - 1] = 0
+    mat_A[k, k + w] = 0
+    mat_A[k, k - w] = 0
+
+    mat_A = mat_A.tocsc()    
+    mask_flat = mask.flatten()
+    for channel in range(c):
+        
+        source_flat = source[:, :, channel].flatten()
+        target_flat = target[:, :, channel].flatten()        
+
+        mat_b = laplacian.dot(source_flat)*0.75
+        mat_b[mask_flat==0] = target_flat[mask_flat==0]
+        
+        x = spsolve(mat_A, mat_b).reshape((h, w))
+        result.append (x)
+
+        
+    return np.clip( np.dstack(result), 0, 1 )
+    
 def reinhard_color_transfer(target, source, clip=False, preserve_paper=False, source_mask=None, target_mask=None):
 	"""
 	Transfers the color distribution from the source to the target
@@ -94,11 +272,11 @@ def linear_color_transfer(target_img, source_img, mode='pca', eps=1e-5):
     '''
     mu_t = target_img.mean(0).mean(0)
     t = target_img - mu_t
-    t = t.transpose(2,0,1).reshape(3,-1)
+    t = t.transpose(2,0,1).reshape( t.shape[-1],-1)
     Ct = t.dot(t.T) / t.shape[1] + eps * np.eye(t.shape[0])
     mu_s = source_img.mean(0).mean(0)
     s = source_img - mu_s
-    s = s.transpose(2,0,1).reshape(3,-1)
+    s = s.transpose(2,0,1).reshape( s.shape[-1],-1)
     Cs = s.dot(s.T) / s.shape[1] + eps * np.eye(s.shape[0])
     if mode == 'chol':
         chol_t = np.linalg.cholesky(Ct)
@@ -189,3 +367,30 @@ def color_hist_match(src_im, tar_im, hist_match_threshold=255):
 
     matched = np.stack(to_stack, axis=-1).astype(src_im.dtype)
     return matched
+
+def color_transfer_mix(img_src,img_trg):
+    img_src = (img_src*255.0).astype(np.uint8)
+    img_trg = (img_trg*255.0).astype(np.uint8)
+    
+    img_src_lab = cv2.cvtColor(img_src, cv2.COLOR_BGR2LAB)
+    img_trg_lab = cv2.cvtColor(img_trg, cv2.COLOR_BGR2LAB)
+    
+    rct_light = np.clip ( linear_color_transfer(img_src_lab[...,0:1].astype(np.float32)/255.0, 
+                                                img_trg_lab[...,0:1].astype(np.float32)/255.0 )[...,0]*255.0,
+                          0, 255).astype(np.uint8)     
+
+    img_src_lab[...,0] = (np.ones_like (rct_light)*100).astype(np.uint8)
+    img_src_lab = cv2.cvtColor(img_src_lab, cv2.COLOR_LAB2BGR)    
+
+    img_trg_lab[...,0] = (np.ones_like (rct_light)*100).astype(np.uint8)
+    img_trg_lab = cv2.cvtColor(img_trg_lab, cv2.COLOR_LAB2BGR)
+    
+    img_rct = color_transfer_sot( img_src_lab.astype(np.float32), img_trg_lab.astype(np.float32) )
+    img_rct = np.clip(img_rct, 0, 255).astype(np.uint8)
+    
+    img_rct = cv2.cvtColor(img_rct, cv2.COLOR_BGR2LAB)    
+    img_rct[...,0] = rct_light
+    img_rct = cv2.cvtColor(img_rct, cv2.COLOR_LAB2BGR)
+    
+    
+    return (img_rct / 255.0).astype(np.float32)
