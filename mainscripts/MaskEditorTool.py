@@ -8,14 +8,14 @@ import cv2
 import numpy as np
 import numpy.linalg as npl
 
-import imagelib
+from core import imagelib
+from DFLIMG import *
 from facelib import LandmarksProcessor
-from imagelib import IEPolys
-from interact import interact as io
-from utils import Path_utils
-from utils.cv2_utils import *
-from utils.DFLJPG import DFLJPG
-from utils.DFLPNG import DFLPNG
+from core.imagelib import IEPolys
+from core.interact import interact as io
+from core import pathex
+from core.cv2ex import *
+
 
 class MaskEditor:
     STATE_NONE=0
@@ -319,14 +319,14 @@ class MaskEditor:
 
     def get_ie_polys(self):
         return self.ie_polys
-    
+
     def set_ie_polys(self, saved_ie_polys):
         self.state = self.STATE_NONE
         self.ie_polys = saved_ie_polys
         self.redo_to_end_point()
         self.mask_finish()
-        
-        
+
+
 def mask_editor_main(input_dir, confirmed_dir=None, skipped_dir=None, no_default_mask=False):
     input_path = Path(input_dir)
 
@@ -341,9 +341,9 @@ def mask_editor_main(input_dir, confirmed_dir=None, skipped_dir=None, no_default
 
     if not skipped_path.exists():
         skipped_path.mkdir(parents=True)
-        
+
     if not no_default_mask:
-        eyebrows_expand_mod = np.clip ( io.input_int ("Default eyebrows expand modifier? (0..400, skip:100) : ", 100), 0, 400 ) / 100.0
+        eyebrows_expand_mod = np.clip ( io.input_int ("Default eyebrows expand modifier?", 100, add_info="0..400"), 0, 400 ) / 100.0
     else:
         eyebrows_expand_mod = None
 
@@ -354,7 +354,7 @@ def mask_editor_main(input_dir, confirmed_dir=None, skipped_dir=None, no_default
 
     cached_images = {}
 
-    image_paths = [ Path(x) for x in Path_utils.get_image_paths(input_path)]
+    image_paths = [ Path(x) for x in pathex.get_image_paths(input_path)]
     done_paths = []
     done_images_types = {}
     image_paths_total = len(image_paths)
@@ -368,7 +368,7 @@ def mask_editor_main(input_dir, confirmed_dir=None, skipped_dir=None, no_default
     do_save_count = 0
     do_skip_move_count = 0
     do_skip_count = 0
-    
+
     def jobs_count():
         return do_prev_count + do_save_move_count + do_save_count + do_skip_move_count + do_skip_count
 
@@ -396,19 +396,14 @@ def mask_editor_main(input_dir, confirmed_dir=None, skipped_dir=None, no_default
                     cached_images[path.name] = cv2_imread(str(path)) / 255.0
 
         if filepath is not None:
-            if filepath.suffix == '.png':
-                dflimg = DFLPNG.load( str(filepath) )
-            elif filepath.suffix == '.jpg':
-                dflimg = DFLJPG.load ( str(filepath) )
-            else:
-                dflimg = None
+            dflimg = DFLIMG.load (filepath)
 
             if dflimg is None:
                 io.log_err ("%s is not a dfl image file" % (filepath.name) )
                 continue
             else:
                 lmrks = dflimg.get_landmarks()
-                ie_polys = dflimg.get_ie_polys()
+                ie_polys = IEPolys.load(dflimg.get_ie_polys())
                 fanseg_mask = dflimg.get_fanseg_mask()
 
                 if filepath.name in cached_images:
@@ -573,4 +568,3 @@ def mask_editor_main(input_dir, confirmed_dir=None, skipped_dir=None, no_default
         io.process_messages(0.005)
 
     io.destroy_all_windows()
-
