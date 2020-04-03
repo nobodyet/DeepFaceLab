@@ -32,7 +32,7 @@ class SampleLoader:
         return len(list(persons_name_idxs.keys()))
 
     @staticmethod
-    def load(sample_type, samples_path):
+    def load(sample_type, samples_path, subdirs=False):
         samples_cache = SampleLoader.samples_cache
 
         if str(samples_path) not in samples_cache.keys():
@@ -42,7 +42,7 @@ class SampleLoader:
 
         if            sample_type == SampleType.IMAGE:
             if  samples[sample_type] is None:
-                samples[sample_type] = [ Sample(filename=filename) for filename in io.progress_bar_generator( pathex.get_image_paths(samples_path), "Loading") ]
+                samples[sample_type] = [ Sample(filename=filename) for filename in io.progress_bar_generator( pathex.get_image_paths(samples_path, subdirs=subdirs), "Loading") ]
 
         elif          sample_type == SampleType.FACE:
             if  samples[sample_type] is None:
@@ -55,7 +55,7 @@ class SampleLoader:
                     io.log_info (f"Loaded {len(result)} packed faces from {samples_path}")
 
                 if result is None:
-                    result = SampleLoader.load_face_samples( pathex.get_image_paths(samples_path) )
+                    result = SampleLoader.load_face_samples( pathex.get_image_paths(samples_path, subdirs=subdirs) )
                 samples[sample_type] = result
 
         elif          sample_type == SampleType.FACE_TEMPORAL_SORTED:
@@ -74,7 +74,8 @@ class SampleLoader:
                 ( face_type,
                   shape,
                   landmarks,
-                  ie_polys,
+                  seg_ie_polys,
+                  xseg_mask,
                   eyebrows_expand_mod,
                   source_filename,
                 ) in result:
@@ -83,33 +84,12 @@ class SampleLoader:
                                         face_type=FaceType.fromString (face_type),
                                         shape=shape,
                                         landmarks=landmarks,
-                                        ie_polys=ie_polys,
+                                        seg_ie_polys=seg_ie_polys,
+                                        xseg_mask=xseg_mask,
                                         eyebrows_expand_mod=eyebrows_expand_mod,
                                         source_filename=source_filename,
                                     ))
         return sample_list
-
-    """
-    @staticmethod
-    def load_face_samples ( image_paths):
-        sample_list = []
-
-        for filename in io.progress_bar_generator (image_paths, desc="Loading"):
-            dflimg = DFLIMG.load (Path(filename))
-            if dflimg is None:
-                io.log_err (f"{filename} is not a dfl image file.")
-            else:
-                sample_list.append( Sample(filename=filename,
-                                           sample_type=SampleType.FACE,
-                                           face_type=FaceType.fromString ( dflimg.get_face_type() ),
-                                           shape=dflimg.get_shape(),
-                                           landmarks=dflimg.get_landmarks(),
-                                           ie_polys=dflimg.get_ie_polys(),
-                                           eyebrows_expand_mod=dflimg.get_eyebrows_expand_mod(),
-                                           source_filename=dflimg.get_source_filename(),
-                                    ))
-        return sample_list
-    """
 
     @staticmethod
     def upgradeToFaceTemporalSortedSamples( samples ):
@@ -169,14 +149,15 @@ class FaceSamplesLoaderSubprocessor(Subprocessor):
             idx, filename = data
             dflimg = DFLIMG.load (Path(filename))
 
-            if dflimg is None:
+            if dflimg is None or not dflimg.has_data():
                 self.log_err (f"FaceSamplesLoader: {filename} is not a dfl image file.")
                 data = None
             else:
                 data = (dflimg.get_face_type(),
                         dflimg.get_shape(),
                         dflimg.get_landmarks(),
-                        dflimg.get_ie_polys(),
+                        dflimg.get_seg_ie_polys(),
+                        dflimg.get_xseg_mask(),
                         dflimg.get_eyebrows_expand_mod(),
                         dflimg.get_source_filename() )
 

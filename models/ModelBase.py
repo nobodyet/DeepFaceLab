@@ -32,6 +32,8 @@ class ModelBase(object):
                        force_gpu_idxs=None,
                        cpu_only=False,
                        debug=False,
+                       force_model_class_name=None,
+                       silent_start=False,
                        **kwargs):
         self.is_training = is_training
         self.saved_models_path = saved_models_path
@@ -44,80 +46,89 @@ class ModelBase(object):
 
         self.model_class_name = model_class_name = Path(inspect.getmodule(self).__file__).parent.name.rsplit("_", 1)[1]
 
-        if force_model_name is not None:
-            self.model_name = force_model_name
-        else:
-            while True:
-                # gather all model dat files
-                saved_models_names = []
-                for filepath in pathex.get_file_paths(saved_models_path):
-                    filepath_name = filepath.name
-                    if filepath_name.endswith(f'{model_class_name}_data.dat'):
-                        saved_models_names += [ (filepath_name.split('_')[0], os.path.getmtime(filepath)) ]
+        if force_model_class_name is None:
+            if force_model_name is not None:
+                self.model_name = force_model_name
+            else:
+                while True:
+                    # gather all model dat files
+                    saved_models_names = []
+                    for filepath in pathex.get_file_paths(saved_models_path):
+                        filepath_name = filepath.name
+                        if filepath_name.endswith(f'{model_class_name}_data.dat'):
+                            saved_models_names += [ (filepath_name.split('_')[0], os.path.getmtime(filepath)) ]
 
-                # sort by modified datetime
-                saved_models_names = sorted(saved_models_names, key=operator.itemgetter(1), reverse=True )
-                saved_models_names = [ x[0] for x in saved_models_names ]
+                    # sort by modified datetime
+                    saved_models_names = sorted(saved_models_names, key=operator.itemgetter(1), reverse=True )
+                    saved_models_names = [ x[0] for x in saved_models_names ]
+                    
 
-                if len(saved_models_names) != 0:
-                    io.log_info ("Choose one of saved models, or enter a name to create a new model.")
-                    io.log_info ("[r] : rename")
-                    io.log_info ("[d] : delete")
-                    io.log_info ("")
-                    for i, model_name in enumerate(saved_models_names):
-                        s = f"[{i}] : {model_name} "
-                        if i == 0:
-                            s += "- latest"
-                        io.log_info (s)
+                    if len(saved_models_names) != 0:
+                        if silent_start:
+                            self.model_name = saved_models_names[0]
+                            io.log_info(f'Silent start: choosed model "{self.model_name}"')
+                        else:
+                            io.log_info ("Choose one of saved models, or enter a name to create a new model.")
+                            io.log_info ("[r] : rename")
+                            io.log_info ("[d] : delete")
+                            io.log_info ("")
+                            for i, model_name in enumerate(saved_models_names):
+                                s = f"[{i}] : {model_name} "
+                                if i == 0:
+                                    s += "- latest"
+                                io.log_info (s)
 
-                    inp = io.input_str(f"", "0", show_default_value=False )
-                    model_idx = -1
-                    try:
-                        model_idx = np.clip ( int(inp), 0, len(saved_models_names)-1 )
-                    except:
-                        pass
+                            inp = io.input_str(f"", "0", show_default_value=False )
+                            model_idx = -1
+                            try:
+                                model_idx = np.clip ( int(inp), 0, len(saved_models_names)-1 )
+                            except:
+                                pass
 
-                    if model_idx == -1:
-                        if len(inp) == 1:
-                            is_rename = inp[0] == 'r'
-                            is_delete = inp[0] == 'd'
+                            if model_idx == -1:
+                                if len(inp) == 1:
+                                    is_rename = inp[0] == 'r'
+                                    is_delete = inp[0] == 'd'
 
-                            if is_rename or is_delete:
-                                if len(saved_models_names) != 0:
+                                    if is_rename or is_delete:
+                                        if len(saved_models_names) != 0:
 
-                                    if is_rename:
-                                        name = io.input_str(f"Enter the name of the model you want to rename")
-                                    elif is_delete:
-                                        name = io.input_str(f"Enter the name of the model you want to delete")
+                                            if is_rename:
+                                                name = io.input_str(f"Enter the name of the model you want to rename")
+                                            elif is_delete:
+                                                name = io.input_str(f"Enter the name of the model you want to delete")
 
-                                    if name in saved_models_names:
-
-                                        if is_rename:
-                                            new_model_name = io.input_str(f"Enter new name of the model")
-
-                                        for filepath in pathex.get_paths(saved_models_path):
-                                            filepath_name = filepath.name
-
-                                            model_filename, remain_filename = filepath_name.split('_', 1)
-                                            if model_filename == name:
+                                            if name in saved_models_names:
 
                                                 if is_rename:
-                                                    new_filepath = filepath.parent / ( new_model_name + '_' + remain_filename )
-                                                    filepath.rename (new_filepath)
-                                                elif is_delete:
-                                                    filepath.unlink()
-                                continue
+                                                    new_model_name = io.input_str(f"Enter new name of the model")
 
-                        self.model_name = inp
+                                                for filepath in pathex.get_paths(saved_models_path):
+                                                    filepath_name = filepath.name
+
+                                                    model_filename, remain_filename = filepath_name.split('_', 1)
+                                                    if model_filename == name:
+
+                                                        if is_rename:
+                                                            new_filepath = filepath.parent / ( new_model_name + '_' + remain_filename )
+                                                            filepath.rename (new_filepath)
+                                                        elif is_delete:
+                                                            filepath.unlink()
+                                        continue
+
+                                self.model_name = inp
+                            else:
+                                self.model_name = saved_models_names[model_idx]
+
                     else:
-                        self.model_name = saved_models_names[model_idx]
+                        self.model_name = io.input_str(f"No saved models found. Enter a name of a new model", "new")
+                        self.model_name = self.model_name.replace('_', ' ')
+                    break
 
-                else:
-                    self.model_name = io.input_str(f"No saved models found. Enter a name of a new model", "new")
-                    self.model_name = self.model_name.replace('_', ' ')
-                break
-
-        self.model_name = self.model_name + '_' + self.model_class_name
+        
+            self.model_name = self.model_name + '_' + self.model_class_name
+        else:
+            self.model_name = force_model_class_name
 
         self.iter = 0
         self.options = {}
@@ -139,9 +150,13 @@ class ModelBase(object):
 
         if self.is_first_run():
             io.log_info ("\nModel first run.")
-
-        self.device_config = nn.DeviceConfig.GPUIndexes( force_gpu_idxs or nn.ask_choose_device_idxs(suggest_best_multi_gpu=True)) \
-                             if not cpu_only else nn.DeviceConfig.CPU()
+            
+        if silent_start:
+            self.device_config = nn.DeviceConfig.BestGPU()
+            io.log_info (f"Silent start: choosed device {'CPU' if self.device_config.cpu_only else self.device_config.devices[0].name}")            
+        else:
+            self.device_config = nn.DeviceConfig.GPUIndexes( force_gpu_idxs or nn.ask_choose_device_idxs(suggest_best_multi_gpu=True)) \
+                                if not cpu_only else nn.DeviceConfig.CPU()
 
         nn.initialize(self.device_config)
 
@@ -412,7 +427,13 @@ class ModelBase(object):
         return imagelib.equalize_and_stack_square (images)
 
     def generate_next_samples(self):
-        self.last_sample = sample = [ generator.generate_next() for generator in self.generator_list]
+        sample = []        
+        for generator in self.generator_list:
+            if generator.is_initialized():
+                sample.append ( generator.generate_next() )
+            else:
+                sample.append ( [] )
+        self.last_sample = sample
         return sample
 
     def train_one_iter(self):
@@ -423,7 +444,8 @@ class ModelBase(object):
 
         self.loss_history.append ( [float(loss[1]) for loss in losses] )
 
-        if self.iter % 10 == 0:
+        if (not io.is_colab() and self.iter % 10 == 0) or \
+           (io.is_colab() and self.iter % 100 == 0):           
             plist = []
 
             if io.is_colab():
@@ -448,7 +470,7 @@ class ModelBase(object):
         self.generate_next_samples()
 
     def finalize(self):
-        nn.tf_close_session()
+        nn.close_session()
 
     def is_first_run(self):
         return self.iter == 0

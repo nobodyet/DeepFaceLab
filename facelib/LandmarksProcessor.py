@@ -9,7 +9,6 @@ import numpy.linalg as npla
 from core import imagelib
 from core import mathlib
 from facelib import FaceType
-from core.imagelib import IEPolys
 from core.mathlib.umeyama import umeyama
 
 landmarks_2D = np.array([
@@ -103,6 +102,29 @@ landmarks_2D_new = np.array([
 [ 0.726104,     0.780233  ], #54
 ], dtype=np.float32)
 
+mouth_center_landmarks_2D = np.array([
+    [-4.4202591e-07,  4.4916576e-01],  #48
+    [ 1.8399176e-01,  3.7537053e-01],  #49
+    [ 3.7018123e-01,  3.3719531e-01],  #50
+    [ 5.0000089e-01,  3.6938059e-01],  #51
+    [ 6.2981832e-01,  3.3719531e-01],  #52
+    [ 8.1600773e-01,  3.7537053e-01],  #53
+    [ 1.0000000e+00,  4.4916576e-01],  #54
+    [ 8.2213330e-01,  6.2836081e-01],  #55
+    [ 6.4110327e-01,  7.0757812e-01],  #56
+    [ 5.0000089e-01,  7.2259867e-01],  #57
+    [ 3.5889623e-01,  7.0757812e-01],  #58
+    [ 1.7786618e-01,  6.2836081e-01],  #59
+    [ 7.6765373e-02,  4.5882553e-01],  #60
+    [ 3.6856663e-01,  4.4601500e-01],  #61
+    [ 5.0000089e-01,  4.5999300e-01],  #62
+    [ 6.3143289e-01,  4.4601500e-01],  #63
+    [ 9.2323411e-01,  4.5882553e-01],  #64
+    [ 6.3399029e-01,  5.4228687e-01],  #65
+    [ 5.0000089e-01,  5.5843467e-01],  #66
+    [ 3.6601129e-01,  5.4228687e-01]   #67
+], dtype=np.float32)
+
 # 68 point landmark definitions
 landmarks_68_pt = { "mouth": (48,68),
                     "right_eyebrow": (17, 22),
@@ -184,6 +206,7 @@ landmarks_68_3D = np.array( [
 [-7.198266   , 30.844876    , -20.328022  ] ], dtype=np.float32)
 
 FaceType_to_padding_remove_align = {
+    FaceType.MOUTH: (0.25, False),
     FaceType.HALF: (0.0, False),
     FaceType.MID_FULL: (0.0675, False),
     FaceType.FULL: (0.2109375, False),
@@ -254,8 +277,12 @@ def get_transform_mat (image_landmarks, output_size, face_type, scale=1.0):
     if not isinstance(image_landmarks, np.ndarray):
         image_landmarks = np.array (image_landmarks)
 
+
     # estimate landmarks transform from global space to local aligned space with bounds [0..1]
-    mat = umeyama( np.concatenate ( [ image_landmarks[17:49] , image_landmarks[54:55] ] ) , landmarks_2D_new, True)[0:2]
+    if face_type == FaceType.MOUTH:
+        mat = umeyama(image_landmarks[48:68], mouth_center_landmarks_2D, True)[0:2]
+    else:
+        mat = umeyama( np.concatenate ( [ image_landmarks[17:49] , image_landmarks[54:55] ] ) , landmarks_2D_new, True)[0:2]
     
     # get corner points in global space
     g_p = transform_points (  np.float32([(0,0),(1,0),(1,1),(0,1),(0.5,0.5) ]) , mat, True)
@@ -281,15 +308,15 @@ def get_transform_mat (image_landmarks, output_size, face_type, scale=1.0):
     
     # calc 3 points in global space to estimate 2d affine transform 
     if not remove_align:
-        l_t = np.array( [ np.round( g_c - tb_diag_vec*mod ),
-                          np.round( g_c + bt_diag_vec*mod ),
-                          np.round( g_c + tb_diag_vec*mod ) ] )
+        l_t = np.array( [ g_c - tb_diag_vec*mod,
+                          g_c + bt_diag_vec*mod,
+                          g_c + tb_diag_vec*mod ] )
     else:
         # remove_align - face will be centered in the frame but not aligned
-        l_t = np.array( [ np.round( g_c - tb_diag_vec*mod ),
-                          np.round( g_c + bt_diag_vec*mod ),
-                          np.round( g_c + tb_diag_vec*mod ),
-                          np.round( g_c - bt_diag_vec*mod ),
+        l_t = np.array( [ g_c - tb_diag_vec*mod,
+                          g_c + bt_diag_vec*mod,
+                          g_c + tb_diag_vec*mod,
+                          g_c - bt_diag_vec*mod,
                          ] )
 
         # get area of face square in global space
@@ -299,9 +326,9 @@ def get_transform_mat (image_landmarks, output_size, face_type, scale=1.0):
         side = np.float32(math.sqrt(area) / 2)
         
         # calc 3 points with unrotated square
-        l_t = np.array( [ np.round( g_c + [-side,-side] ),
-                          np.round( g_c + [ side,-side] ),
-                          np.round( g_c + [ side, side] ) ] )
+        l_t = np.array( [ g_c + [-side,-side],
+                          g_c + [ side,-side],
+                          g_c + [ side, side] ] )
 
     # calc affine transform from 3 global space points to 3 local space points size of 'output_size'
     pts2 = np.float32(( (0,0),(output_size,0),(output_size,output_size) ))
@@ -346,7 +373,7 @@ def expand_eyebrows(lmrks, eyebrows_expand_mod=1.0):
 
 
 
-def get_image_hull_mask (image_shape, image_landmarks, eyebrows_expand_mod=1.0, ie_polys=None ):
+def get_image_hull_mask (image_shape, image_landmarks, eyebrows_expand_mod=1.0 ):
     hull_mask = np.zeros(image_shape[0:2]+(1,),dtype=np.float32)
 
     lmrks = expand_eyebrows(image_landmarks, eyebrows_expand_mod)
@@ -364,9 +391,6 @@ def get_image_hull_mask (image_shape, image_landmarks, eyebrows_expand_mod=1.0, 
     for item in parts:
         merged = np.concatenate(item)
         cv2.fillConvexPoly(hull_mask, cv2.convexHull(merged), (1,) )
-
-    if ie_polys is not None:
-        ie_polys.overlay_mask(hull_mask)
 
     return hull_mask
     
@@ -619,13 +643,13 @@ def mirror_landmarks (landmarks, val):
     result[:,0] = val - result[:,0] - 1
     return result
 
-def get_face_struct_mask (image_shape, image_landmarks, eyebrows_expand_mod=1.0, ie_polys=None, color=(1,) ):
+def get_face_struct_mask (image_shape, image_landmarks, eyebrows_expand_mod=1.0, color=(1,) ):
     mask = np.zeros(image_shape[0:2]+( len(color),),dtype=np.float32)
     lmrks = expand_eyebrows(image_landmarks, eyebrows_expand_mod)
-    draw_landmarks (mask, image_landmarks, color=color, draw_circles=False, thickness=2, ie_polys=ie_polys)    
+    draw_landmarks (mask, image_landmarks, color=color, draw_circles=False, thickness=2)    
     return mask
     
-def draw_landmarks (image, image_landmarks, color=(0,255,0), draw_circles=True, thickness=1, transparent_mask=False, ie_polys=None):
+def draw_landmarks (image, image_landmarks, color=(0,255,0), draw_circles=True, thickness=1, transparent_mask=False):
     if len(image_landmarks) != 68:
         raise Exception('get_image_eye_mask works only with 68 landmarks')
 
@@ -655,11 +679,11 @@ def draw_landmarks (image, image_landmarks, color=(0,255,0), draw_circles=True, 
             cv2.circle(image, (x, y), 2, color, lineType=cv2.LINE_AA)
 
     if transparent_mask:
-        mask = get_image_hull_mask (image.shape, image_landmarks, ie_polys=ie_polys)
+        mask = get_image_hull_mask (image.shape, image_landmarks)
         image[...] = ( image * (1-mask) + image * mask / 2 )[...]
 
-def draw_rect_landmarks (image, rect, image_landmarks, face_type, face_size=256, transparent_mask=False, ie_polys=None, landmarks_color=(0,255,0)):
-    draw_landmarks(image, image_landmarks, color=landmarks_color, transparent_mask=transparent_mask, ie_polys=ie_polys)
+def draw_rect_landmarks (image, rect, image_landmarks, face_type, face_size=256, transparent_mask=False, landmarks_color=(0,255,0)):
+    draw_landmarks(image, image_landmarks, color=landmarks_color, transparent_mask=transparent_mask)
     imagelib.draw_rect (image, rect, (255,0,0), 2 )
 
     image_to_face_mat = get_transform_mat (image_landmarks, face_size, face_type)
