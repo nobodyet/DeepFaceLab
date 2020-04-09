@@ -41,7 +41,31 @@ DeepFaceLab is used by such popular youtube channels as
 </td></tr>
 <tr><td align="center" width="9999">
 
-## Change political speech*
+## Replace the head
+
+
+<table align="center" border="0"><tr>
+
+<td align="center" width="9999">
+
+<img src="doc/head_replace_1.jpg" align="center">
+
+</td>
+
+<td align="center" width="9999">
+
+<img src="doc/head_replace_2.jpg" align="center">
+
+</td>
+
+</table>
+
+![](doc/youtube_icon.png) https://www.youtube.com/watch?v=xr5FHd0AdlQ
+
+</td></tr>
+<tr><td align="center" width="9999">
+
+## Change the lip movement of politicians*
 
 <img src="doc/political_speech.jpg" align="center">
 
@@ -123,9 +147,9 @@ Unfortunately, there is no "make everything ok" button in DeepFaceLab. You shoul
 ||bitcoin:bc1qkhh7h0gwwhxgg6h6gpllfgstkd645fefrd5s6z|
 |Alipay 捐款|![](doc/Alipay_donation.jpg)|
 |||
-|Last donations|50$ ( John Lee )|
-||100$ ( The Mister Network )|
-||50$ ( Tomas Hajka )|
+|Last donations|20$ ( 飛星工作室  )|
+||100$ ( Peter S. )|
+||50$ ( John Lee )|
 |||
 |Collect facesets|You can collect faceset of any celebrity that can be used in DeepFaceLab and share it [in the community](https://mrdeepfakes.com/forums/forum-celebrity-facesets)|
 |||
@@ -137,7 +161,9 @@ Unfortunately, there is no "make everything ok" button in DeepFaceLab. You shoul
 ## Meme zone
 <p align="center">
 
-![](doc/DeepFaceLab_is_working.png)
+![](doc/meme1.jpg)
+
+![](doc/meme2.jpg)
 
 </p>
 
