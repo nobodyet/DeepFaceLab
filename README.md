@@ -96,8 +96,7 @@ Unfortunately, there is no "make everything ok" button in DeepFaceLab. You shoul
 
 ||||
 |---|---|---|
-|Windows|[github releases](https://github.com/iperov/DeepFaceLab/releases)|Direct download|
-||[Google drive](https://drive.google.com/open?id=1BCFK_L7lPNwMbEQ_kFPqPpDdFEOd_Dci)|if the download quota is exceeded, add the file to your own google drive and download from it|
+|Windows|[Mega.nz](https://mega.nz/folder/Po0nGQrA#dbbttiNWojCt8jzD4xYaPw)||
 |Google Colab|[github](https://github.com/chervonij/DFL-Colab)|by @chervonij . You can train fakes for free using Google Colab.|
 |CentOS Linux|[github](https://github.com/elemantalcode/dfl)|by @elemantalcode|
 |Linux|[github](https://github.com/lbfs/DeepFaceLab_Linux)|by @lbfs |
@@ -107,8 +106,15 @@ Unfortunately, there is no "make everything ok" button in DeepFaceLab. You shoul
 
 <tr><td align="center" width="9999">
 
-## Links
+## Mini tutorial
 
+<a href="https://www.youtube.com/watch?v=1smpMsfC3ls">
+
+<img src="doc/mini_tutorial.jpg" align="center">
+
+</a>
+
+## Links
 
 ||||
 |---|---|---|
@@ -147,13 +153,14 @@ Unfortunately, there is no "make everything ok" button in DeepFaceLab. You shoul
 ||bitcoin:bc1qkhh7h0gwwhxgg6h6gpllfgstkd645fefrd5s6z|
 |Alipay 捐款|![](doc/Alipay_donation.jpg)|
 |||
-|Last donations|20$ ( 飛星工作室  )|
-||100$ ( Peter S. )|
-||50$ ( John Lee )|
+|Last donations|20$ ( Michael V. )| 
+||5$ ( Boris H. )|
+||10$ ( John R. )|
 |||
 |Collect facesets|You can collect faceset of any celebrity that can be used in DeepFaceLab and share it [in the community](https://mrdeepfakes.com/forums/forum-celebrity-facesets)|
 |||
 |Star this repo|Register github account and push "Star" button.|
+
 </td></tr>
 
 <tr><td align="center" width="9999">
