@@ -140,7 +140,7 @@ nn.resize2d_bilinear = resize2d_bilinear
 def resize2d_nearest(x, size=2):
     if size in [-1,0,1]:
         return x
-        
+
 
     if size > 0:
         raise Exception("")
@@ -150,7 +150,7 @@ def resize2d_nearest(x, size=2):
         else:
             x = x[:,::-size,::-size,:]
     return x
-        
+
     h = x.shape[nn.conv2d_spatial_axes[0]].value
     w = x.shape[nn.conv2d_spatial_axes[1]].value
 
@@ -204,7 +204,7 @@ def random_binomial(shape, p=0.0, dtype=None, seed=None):
         seed = np.random.randint(10e6)
     return array_ops.where(
         random_ops.random_uniform(shape, dtype=tf.float16, seed=seed) < p,
-        array_ops.ones(shape, dtype=dtype), array_ops.zeros(shape, dtype=dtype))
+             array_ops.ones(shape, dtype=dtype), array_ops.zeros(shape, dtype=dtype))
 nn.random_binomial = random_binomial
 
 def gaussian_blur(input, radius=2.0):
@@ -268,9 +268,9 @@ def dssim(img1,img2, max_val, filter_size=11, filter_sigma=1.5, k1=0.01, k2=0.03
         img_dtype = img1.dtype
         img1 = tf.cast(img1, tf.float32)
         img2 = tf.cast(img2, tf.float32)
-    
+
     filter_size = max(1, filter_size)
-    
+
     kernel = np.arange(0, filter_size, dtype=np.float32)
     kernel -= (filter_size - 1 ) / 2.0
     kernel = kernel**2
@@ -333,7 +333,9 @@ def depth_to_space(x, size):
         x = tf.reshape(x, (-1, oh, ow, oc, ))
         return x
     else:
-        
+        cfg = nn.getCurrentDeviceConfig()
+        if not cfg.cpu_only:
+            return tf.depth_to_space(x, size, data_format=nn.data_format)
         b,c,h,w = x.shape.as_list()
         oh, ow = h * size, w * size
         oc = c // (size * size)
@@ -342,8 +344,6 @@ def depth_to_space(x, size):
         x = tf.transpose(x, (0, 3, 4, 1, 5, 2))
         x = tf.reshape(x, (-1, oc, oh, ow))
         return x
-        return tf.depth_to_space(x, size, data_format=nn.data_format)
-        
 nn.depth_to_space = depth_to_space
 
 def rgb_to_lab(srgb):
@@ -376,6 +376,23 @@ def rgb_to_lab(srgb):
     return tf.reshape(lab_pixels, tf.shape(srgb))
 nn.rgb_to_lab = rgb_to_lab
 
+def total_variation_mse(images):
+    """
+    Same as generic total_variation, but MSE diff instead of MAE
+    """
+    pixel_dif1 = images[:, 1:, :, :] - images[:, :-1, :, :]
+    pixel_dif2 = images[:, :, 1:, :] - images[:, :, :-1, :]
+    
+    tot_var = ( tf.reduce_sum(tf.square(pixel_dif1), axis=[1,2,3]) +
+                tf.reduce_sum(tf.square(pixel_dif2), axis=[1,2,3]) )
+    return tot_var
+nn.total_variation_mse = total_variation_mse
+
+
+def pixel_norm(x, axes):
+    return x * tf.rsqrt(tf.reduce_mean(tf.square(x), axis=axes, keepdims=True) + 1e-06)
+nn.pixel_norm = pixel_norm
+        
 """
 def tf_suppress_lower_mean(t, eps=0.00001):
     if t.shape.ndims != 1:
